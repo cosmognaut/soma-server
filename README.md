@@ -18,7 +18,7 @@ This is still **very** early in development, so you may notice some things break
    ```bash
    uv sync
    ```
-   This may take some time because it installs `torch` amongst other things, which is a heavy library.
+   This may take some time because it installs `torch` among other things, which is a heavy library.
   
 3. The entrypoint has already been set in the `pyproject.toml`. Just run the `fastapi` command now:
    ```bash

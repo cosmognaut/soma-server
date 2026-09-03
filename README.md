@@ -8,6 +8,10 @@ This is the backend server and logic for SIH26117, a project me and my team have
 The core workflow (inside `logic/`) was built using LangGraph, with OCR support from docling. We are currently using proprietary LLMs for fast development because of hardware issues. The model configured right now is `gemini-3.8-flash-high`.
 The server itself uses FastAPI to expose the workflow.
 
+## Test it locally
+This is still **very** early in development, so you may notice some things breaking. But still, for development, follow the below steps:
+1. Clone the repository:
+
 ## Limitations
 1. Argubaly the biggest limitation is that we're using a proprietary model for testing right now. Things ARE going to break with the VLM + Coding LLM architecture in open source models. This is a severe limitation.
 2. There is no "general" model yet - one can either run a coding task or a vision task, which are routed to the singular model we've been using. 

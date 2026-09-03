@@ -1,13 +1,27 @@
 import uuid
 import json
 from logic import graph
+from collections.abc import AsyncIterable
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse
-from collections.abc import AsyncIterable, Iterable
+from fastapi.middleware.cors import CORSMiddleware
 from .models import Message, MessageRequest, StreamChunk, UploadResponse
 from langchain_core.messages import AnyMessage, HumanMessage, AIMessage
 
 app = FastAPI()
+
+origins = [ 
+    "*" # allow all for testing
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.post("/api/message", response_class=StreamingResponse)
 async def stream_message(message_request: MessageRequest) -> AsyncIterable[str]:

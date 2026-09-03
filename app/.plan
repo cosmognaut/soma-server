@@ -1,0 +1,53 @@
+2026-09-03
+there are two endpoints.
+POST /api/message where it sends a stream of chunks to the client
+POST /api/upload where the user uploads a file and I save it
+
+
+In POST /api/message I need to stream content back to the user. Hmm, how do I do this? I might want to read up on the docs. I need to get this working asap. I want to leverage FastAPI deploy, that would be so frickin cool. But anyways, how do I stream it? Before I do any of this I have to do two things:
+1. Convert history and current message (input) into AnyMessage for LangGraph.
+2. Invoke the graph with the correct params by using the constructor.
+3. Somehow stream this? I don't know.
+Let me do the first two first in main.py.
+
+Okay I am back. I implemented some streaming in logic/graph.py. I did some tests and found out that when I am yielding chunks, I can use the condition
+if chunk['type'] == "updates" and list(chunk['data'].values())[0]['messages'][0] is an instance of AIMessage with content not equal to '' and tool_calls=[] is sufficient for determining if this is the final response or not.
+Fair warning - this might be me hardcoding this in accordance with the model I am working with (gemini-3.8-flash-high), and this might not work for every model. This is all the more reason that the "open source" integration should be done as soon as possible.
+
+Let me write the yield logic now. It seems that .stream() returns a generator. It turns out that a StreamingResponse can only be a string, since it's a server sent event. This is interesting.
+
+An ordinary chunk is of the type 
+{'type': 'custom', 'ns': (), 'data': {'status': 'thinking..'}}
+
+But that final message in gemini-3.8-flash-high at least is
+
+{'type': 'updates', 'ns': ('coding_subgraph_node:495c8eca-c8a8-bcfd-fb70-9ba6c1014ce0',), 'data': {'llm_node': {'messages': [AIMessage(content='Here is an efficient Python script to find the 10,000th prime number. It uses the **Sieve of Eratosthenes** along with the Prime Number Theorem\'s upper-bound formula ($p_n < n(\\ln n + \\ln \\ln n)$ for $n \\ge 6$) to compute it in a few milliseconds.\n\n```python\nimport math\n\n\ndef nth_prime(n: int) -> int:\n    """Returns the n-th prime number (1-indexed)."""\n    if n < 1:\n        raise ValueError("n must be a positive integer.")\n    if n < 6:\n        return [2, 3, 5, 7, 11][n - 1]\n\n    # Upper bound for the n-th prime (Rosser\'s theorem: p_n < n*(ln(n) + ln(ln(n))) for n >= 6)\n    limit = int(n * (math.log(n) + math.log(math.log(n)))) + 10\n\n    # Sieve of Eratosthenes\n    is_prime = bytearray([1]) * limit\n    is_prime[0] = is_prime[1] = 0\n\n    count = 0\n    for p in range(2, limit):\n        if is_prime[p]:\n            count += 1\n            if count == n:\n                return p\n            # Mark multiples of p starting at p^2\n            is_prime[p * p : limit : p] = bytearray(len(range(p * p, limit, p)))\n\n    raise RuntimeError("Limit was insufficient to find the n-th prime.")\n\n\nif __name__ == "__main__":\n    n = 10000\n    prime = nth_prime(n)\n    print(f"The {n}th prime number is: {prime}")\n```\n\n### Output:\n```text\nThe 10000th prime number is: 104729\n```', additional_kwargs={'refusal': None}, response_metadata={'token_usage': {'completion_tokens': 454, 'prompt_tokens': 518, 'total_tokens': 1108, 'completion_tokens_details': {'accepted_prediction_tokens': None, 'audio_tokens': None, 'reasoning_tokens': 136, 'rejected_prediction_tokens': None, 'text_tokens': None}, 'prompt_tokens_details': {'audio_tokens': None, 'cache_write_tokens': None, 'cached_tokens': 0, 'image_tokens': None, 'text_tokens': None}, 'cached_tokens': 0}, 'model_provider': 'openai', 'model_name': 'gemini-3.8-flash-high', 'system_fingerprint': None, 'id': 'chatcmpl-9eae4ae3-f97a-46d8-ad70-bb90423c968e', 'finish_reason': 'stop', 'logprobs': None}, id='lc_run--01a0688a-1282-75b1-9c87-a61876f6a627-0', tool_calls=[], invalid_tool_calls=[], usage_metadata={'input_tokens': 518, 'output_tokens': 454, 'total_tokens': 1108, 'input_token_details': {'cache_read': 0}, 'output_token_details': {'reasoning': 136}})]}}}
+
+---
+While testing I have discovered a MASSIVE flaw in this architecture - the model returns None for general queries, which routes to NOTHING as of now.
+TODO: add a general model routing graph to answer general user queries.
+
+Another interesting todo is that I am seeing the "routing to appropriate model" message a few times. I want this to be better.
+curl -X POST http://localhost:8000/api/message \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"role": "user", "content": "hello, can you write a script that calculates the 10001st prime number?"}, "history": []}' \
+  --no-buffer
+data: {"type": "status", "payload": "thinking.."}
+
+data: {"type": "status", "payload": "asking the coding model.."}
+
+data: {"type": "status", "payload": "routing to the appropriate model.."}
+
+data: {"type": "answer", "payload": ""}
+
+data: {"type": "status", "payload": "calling tool for sandbox execution.."}
+
+data: {"type": "status", "payload": "running python code..."}
+
+data: {"type": "status", "payload": "asking the coding model.."}
+
+data: {"type": "status", "payload": "routing to the appropriate model.."}
+
+data: {"type": "answer", "payload": "Here is a Python script that calculates the 10,001st prime number. \n\n### Fast & Recommended: Sieve of Eratosthenes\n\nUsing the Sieve of Eratosthenes along with an upper bound approximation (via the Prime Number Theorem: $p_n < n(\\ln n + \\ln \\ln n)$ for $n \\ge 6$), we can find it in just a few milliseconds:\n\n```python\nimport math\n\ndef find_nth_prime(n: int) -> int:\n    if n == 1:\n        return 2\n    if n < 6:\n        return [2, 3, 5, 7, 11][n - 1]\n\n    # Upper bound for the nth prime (Rosser's theorem)\n    limit = int(n * (math.log(n) + math.log(math.log(n)))) + 1000\n\n    sieve = bytearray([1]) * (limit + 1)\n    sieve[0] = sieve[1] = 0\n\n    count = 0\n    for p in range(2, limit + 1):\n        if sieve[p]:\n            count += 1\n            if count == n:\n                return p\n            # Mark multiples as non-prime\n            for multiple in range(p * p, limit + 1, p):\n                sieve[multiple] = 0\n\n    raise ValueError(\"Limit was too small to find the nth prime.\")\n\nif __name__ == \"__main__\":\n    n = 10001\n    print(f\"The {n}st prime number is: {find_nth_prime(n)}\")\n```\n\n---\n\n### Alternative: Simple Trial Division (No external bounds needed)\n\nIf you prefer a simpler script that doesn't need to estimate an upper bound in advance:\n\n```python\ndef is_prime(num: int) -> bool:\n    if num < 2:\n        return False\n    if num in (2, 3):\n        return True\n    if num % 2 == 0 or num % 3 == 0:\n        return False\n    # Check divisors of form 6k \u00b1 1 up to sqrt(num)\n    i = 5\n    while i * i <= num:\n        if num % i == 0 or num % (i + 2) == 0:\n            return False\n        i += 6\n    return True\n\ndef find_nth_prime(n: int) -> int:\n    count = 0\n    candidate = 1\n    while count < n:\n        candidate += 1\n        if is_prime(candidate):\n            count += 1\n    return candidate\n\nif __name__ == \"__main__\":\n    n = 10001\n    print(f\"The {n}st prime number is: {find_nth_prime(n)}\")\n```\n\n### Output:\n```text\nThe 10001st prime number is: 104743\n```"}
+
+woah, wait. There is a MASSIVE error in this response. The type answer thing was sent way earlier than usual. Something is very wrong. Let me debug this.

@@ -11,3 +11,7 @@ wheels/
 
 # env
 .env
+
+# uploads for testing
+uploads/*
+!uploads/.gitkeep

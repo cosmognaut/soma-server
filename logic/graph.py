@@ -16,7 +16,7 @@ from langchain.messages import AnyMessage, SystemMessage, ToolMessage, HumanMess
 
 
 load_dotenv()
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") - not used right now
 MY_ENDPOINT = os.getenv("MY_ENDPOINT")
 ENDPOINT_KEY = os.getenv("API_KEY")
 
@@ -59,7 +59,10 @@ class CodingState(TypedDict):
 def llm_node(state: CodingState):
     """Node for the LLM with tools, it returns a message here"""
     writer = get_stream_writer()
-    writer({"status": "asking the coding model.."})
+    if len(state["messages"]) <= 2:
+        writer({"status": "asking the coding model.."})
+    else:
+        writer({"status": "coding model is on it.."})
     latest_message = state["messages"][-1]
     # print(f"[CODING_SUBGRAPH {llm_node.__name__} -> latest message is: {latest_message}]")
     model_with_tools = MODEL.bind_tools([run_python])
@@ -70,7 +73,7 @@ def llm_node(state: CodingState):
 def tool_node(state: CodingState):
     """Node for the tool execution. We check the last message for tool_calls. If there are indeed calls, we execute the tools and return a ToolMessage."""
     writer = get_stream_writer()
-    writer({"status": "calling tool for sandbox execution.."})
+    writer({"status": "calling tool for secure sandboxed execution.."})
     # print(f"[CODING_SUBGRAPH {tool_node.__name__}]")
     last_message_tool_calls = state["messages"][-1].tool_calls
     # print(last_message_tool_calls)
@@ -87,7 +90,7 @@ def routing_function(state: CodingState):
     """Routing function that decides whether we should go to the tool node or not"""
     # still a work in progress
     writer = get_stream_writer()
-    writer({"status": "routing to the appropriate model.."})
+    writer({"status": "seeing if I need to call a tool.."})
     # print(f"[CODING_SUBGRAPH {routing_function.__name__}]")
     last_message = state["messages"][-1]
     return last_message.tool_calls != []
@@ -171,16 +174,27 @@ def supervisor_node(state: ParentState):
     # return a command object that routes to either the coding subgraph or the image subgraph
     if result.action == "Coding":
         return Command(update={"messages": [SystemMessage(content="routing to coding model...")]}, goto="coding_subgraph_node")
-
     if result.action == "Vision":
         # I am using a shared state key to share state between ParentState and VisionState
         # an alternative would be to call the subgraph right here, right now.
         return Command(update={"messages": [SystemMessage(content="routing to vision model...")], "file_path": result.file_path}, goto="vision_subgraph_node")
+    if result.action == "None":
+        # there is no separate subgraph for the generall model, the general model is the one that classifies the task here.
+        return Command(update={"messages": [SystemMessage(content="routing to the general model...")]}, goto="general_node")
+
+def general_node(state: ParentState):
+    """Node for general queries, that don't require a specialised coding or vision model"""
+    # currently, this uses as the same model which is routing to coding or vision models.
+    writer = get_stream_writer()
+    writer({"status": "crunching.."})
+    system = SystemMessage(content="You are Soma, a helpful AI assistant developed by team Malai Chaap. You will help the user with their general queries.")
+    return {"messages": [MODEL.invoke(input=[system] + state["messages"])]}
 
 parent_graph_builder = StateGraph(ParentState)
 parent_graph_builder.add_node("supervisor_node", supervisor_node)
 parent_graph_builder.add_node("coding_subgraph_node", coding_subgraph)
 parent_graph_builder.add_node("vision_subgraph_node", vision_subgraph)
+parent_graph_builder.add_node("general_node", general_node)
 parent_graph_builder.add_edge(START, "supervisor_node")
 parent_graph_builder.add_edge("supervisor_node", END)
 parent_graph = parent_graph_builder.compile()

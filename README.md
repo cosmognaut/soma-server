@@ -18,7 +18,7 @@ This is still **very** early in development, so you may notice some things break
    ```bash
    uv sync
    ```
-   This may take some time because it installs `torch` among other things, which is a heavy library.
+   This may take some time because it installs `torch` among other things, which is a heavy library. You may want to use `uv venv` before and activate it but `uv sync` automatically does that for you.
 3. Now edit the `.env` using your own values. If you are using the official APIs, refer to the LangGraph docs.
    ```bash
    vim .env

@@ -40,7 +40,7 @@ This is still **very** early in development, so you may notice some things break
 
 ## Limitations
 1. Argubaly the biggest limitation is that we're using a proprietary model for testing right now. Things ARE going to break with the VLM + Coding LLM architecture in open source models. This is a severe limitation.
-2. There is no "general" model yet - one can either run a coding task or a vision task, which are routed to the singular model we've been using. 
+2. There is no true multi-modal routing yet - the routing is there with specialised agents working on vision or coding related tasks; but I am still using only one LLM for all of those. This is suboptimal. I am also using the same model for general queries too. While the model handles it well (as it's `gemini-3.8-flash-high`), in real execution we will need to add different open source models for each step. At least 3 separate, specialised models are required.
 3. No multiple file uploads for now.
 4. No server persistence. We are not using RAG for now, so persistence via Qdrant or something else doesn't make sense. The client captures the entire conversation history in their requests, so we're not even using LangGraph's checkpointers for saving memory.
 5. This is a minor one but is still worth mentioning - we don't stream any errors to the client right now.

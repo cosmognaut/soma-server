@@ -147,7 +147,8 @@ async def parse_document(state: VisionState):
     writer(current_status)
     # this is going to block the fucking event loop
     # let me allocate this another thread
-    result = await asyncio.to_thread(converter.convert, source)
+    async with asyncio.Semaphore(1):
+        result = await asyncio.to_thread(converter.convert, source)
     return { "extracted_info" : result.document.export_to_markdown() }
 
 def extract_and_describe_entities(state: VisionState):

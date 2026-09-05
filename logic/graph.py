@@ -154,7 +154,7 @@ def extract_and_describe_entities(state: VisionState):
     """Node for extracting and describing entities in the vision graph"""
     # we take the markdown from the state
     writer = get_stream_writer()
-    writer({"status": "extracting entities.."})
+    writer({"status": "extracting entities..."})
     # print(f"[VISION_SUBGRAPH extract_entities]: Extracting entities.., last message: {state["messages"][-1]}")
     markdown = state["extracted_info"]
     # structured_model = MODEL.with_structured_output(ExtractedData)

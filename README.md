@@ -42,8 +42,9 @@ This is still **very** early in development, so you may notice some things break
 1. Argubaly the biggest limitation is that we're using a proprietary model for testing right now. Things ARE going to break with the VLM + Coding LLM architecture in open source models. This is a severe limitation.
 2. There is no true multi-modal routing yet - the routing is there with specialised agents working on vision or coding related tasks; but I am still using only one LLM for all of those. This is suboptimal. I am also using the same model for general queries too. While the model handles it well (as it's `gemini-3.8-flash-high`), in real execution we will need to add different open source models for each step. At least 3 separate, specialised models are required.
 3. No multiple file uploads for now.
-4. No server persistence. We are not using RAG for now, so persistence via Qdrant or something else doesn't make sense. The client captures the entire conversation history in their requests, so we're not even using LangGraph's checkpointers for saving memory.
-5. This is a minor one but is still worth mentioning - we don't stream any errors to the client right now.
+4. If the user uploads a big file now (> maybe 50 pages?) my server crashes even with `Semaphore(1)` because of the kernel triggering OOM. This is easily fixable if I move this server to a better PC with an actual GPU, but it seems that I can't do that right now.
+5. No server persistence. We are not using RAG for now, so persistence via Qdrant or something else doesn't make sense. The client captures the entire conversation history in their requests, so we're not even using LangGraph's checkpointers for saving memory.
+6. This is a minor one but is still worth mentioning - we don't stream any errors to the client right now.
 
 ## Architecture
 Still kind of undecided upon.

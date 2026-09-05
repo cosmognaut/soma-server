@@ -1,17 +1,22 @@
 import os
+import torch
 import docker
+import asyncio
 import operator
 from dotenv import load_dotenv
-from typing import Any, Optional
 from pydantic import BaseModel
+from .hack import ocr_required
 from langchain.tools import tool
+from typing import Any, Optional
 from langgraph.types import Command
 from langgraph.config import get_stream_writer
 from langchain_openai import ChatOpenAI
 from langchain.chat_models import init_chat_model
 from typing_extensions import TypedDict, Annotated
 from langgraph.graph import StateGraph, START, END
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.pipeline_options import PdfPipelineOptions
 from langchain.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage
 
 
@@ -20,6 +25,7 @@ load_dotenv()
 MY_ENDPOINT = os.getenv("MY_ENDPOINT")
 ENDPOINT_KEY = os.getenv("API_KEY")
 
+torch.set_num_threads(2)
 
 MODEL = ChatOpenAI(
     model="gemini-3.8-flash-high",
@@ -58,11 +64,12 @@ class CodingState(TypedDict):
 
 def llm_node(state: CodingState):
     """Node for the LLM with tools, it returns a message here"""
+    # this might not be needed now that I have implemented an async loop
     writer = get_stream_writer()
     if len(state["messages"]) <= 2:
-        writer({"status": "asking the coding model.."})
+        writer({"status": "asking the coding model..."})
     else:
-        writer({"status": "coding model is on it.."})
+        writer({"status": "coding model is on it..."})
     latest_message = state["messages"][-1]
     # print(f"[CODING_SUBGRAPH {llm_node.__name__} -> latest message is: {latest_message}]")
     model_with_tools = MODEL.bind_tools([run_python])
@@ -73,7 +80,7 @@ def llm_node(state: CodingState):
 def tool_node(state: CodingState):
     """Node for the tool execution. We check the last message for tool_calls. If there are indeed calls, we execute the tools and return a ToolMessage."""
     writer = get_stream_writer()
-    writer({"status": "calling tool for secure sandboxed execution.."})
+    writer({"status": "calling tool for secure sandboxed execution..."})
     # print(f"[CODING_SUBGRAPH {tool_node.__name__}]")
     last_message_tool_calls = state["messages"][-1].tool_calls
     # print(last_message_tool_calls)
@@ -90,7 +97,7 @@ def routing_function(state: CodingState):
     """Routing function that decides whether we should go to the tool node or not"""
     # still a work in progress
     writer = get_stream_writer()
-    writer({"status": "seeing if I need to call a tool.."})
+    writer({"status": "seeing if I need to call a tool..."})
     # print(f"[CODING_SUBGRAPH {routing_function.__name__}]")
     last_message = state["messages"][-1]
     return last_message.tool_calls != []
@@ -117,15 +124,30 @@ class ExtractedData(BaseModel):
     key_findings: list[str]
     requires_action: bool # will lead to an interrupt
 
-def parse_document(state: VisionState):
-    """Node for parsing a document in the vision graph"""
+async def parse_document(state: VisionState):
+    """Node for parsing a document in the vision graph. This is a blocking function."""
     writer = get_stream_writer()
-    writer({"status": "asking the vision model.."})
+    writer({"status": "asking the vision model..."})
     # print(f"[VISION_SUBGRAPH parse_document]: Parsing document.., last message: {state["messages"][-1]}")
-    source = state["file_path"]  # a document via a local path or URL
     # print(f"[VISION_SUBGRAPH parse_document]: Document path: {source}")
-    converter = DocumentConverter()
-    result = converter.convert(source)
+    source = f"{os.getcwd()}{state["file_path"]}"
+    print(f"File souce is {source}")
+    print(f"Path exists? {os.path.exists(source)}")
+    ocr = ocr_required(source)
+    print(f"OCR: {ocr}")
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=PdfPipelineOptions(do_ocr=ocr)
+            ),
+        }
+    )
+    current_status = {"status": "performing OCR..."} if ocr else {"status": "sifting through this document..."}
+    writer = get_stream_writer()
+    writer(current_status)
+    # this is going to block the fucking event loop
+    # let me allocate this another thread
+    result = await asyncio.to_thread(converter.convert, source)
     return { "extracted_info" : result.document.export_to_markdown() }
 
 def extract_and_describe_entities(state: VisionState):
@@ -164,29 +186,36 @@ class SupervisorModel(BaseModel):
 def supervisor_node(state: ParentState):
     """Supervisor node which decides whether to route to coding subgraph or the vision subgraph based on the user's prompt"""
     writer = get_stream_writer()
-    writer({"status": "thinking.."})
+    writer({"status": "thinking..."})
     # print(f"[{supervisor_node.__name__}]")
     latest_message = state["messages"][-1]
     model = MODEL.with_structured_output(SupervisorModel)
-    result = model.invoke(input=f"Based on this message: {latest_message} just reply using one word for action and another for the file path, if present - either Coding or Vision based on whether the task is related to coding or vision operations. If it's related to neither, just put None in action. If it's a task related to documents (i.e. vision), make sure that the file_path has the correct file path. Because this is running on a server, make sure that filepaths are formatted well, for example if the user gives abc.pdf you must write ../app/uploads/abc.pdf for file path. Example of coding tasks: anything where code has to be written. Example of vision tasks: document parsing, ex. extracting entitites from a document, document path, etc.")
+    result = model.invoke(input=f"Based on this message: {latest_message} just reply using one word for action and another for the file path, if present - either Coding or Vision based on whether the task is related to coding or vision operations. If it's related to neither, just put None in action. If it's a task related to documents (i.e. vision), make sure that the file_path has the correct file path. Because this is running on a server, make sure that filepaths are formatted well, for example if the user gives abc.pdf you must write /app/uploads/abc.pdf for file path. Example of coding tasks: anything where code has to be written. Example of vision tasks: document parsing, ex. extracting entitites from a document, document path, etc.")
     # final_output = result.content[0]['text'] # Coding, Image or None
     # print(f"[{supervisor_node.__name__}]: {result}")
     # return a command object that routes to either the coding subgraph or the image subgraph
+    print(f"Result is {result}")
     if result.action == "Coding":
-        return Command(update={"messages": [SystemMessage(content="routing to coding model...")]}, goto="coding_subgraph_node")
+        writer = get_stream_writer()
+        writer({"status": "routing to the coding model..."})
+        return Command(update={"messages": [SystemMessage(content="making sure I don't sudo rm -rf / this server...")]}, goto="coding_subgraph_node")
     if result.action == "Vision":
         # I am using a shared state key to share state between ParentState and VisionState
         # an alternative would be to call the subgraph right here, right now.
-        return Command(update={"messages": [SystemMessage(content="routing to vision model...")], "file_path": result.file_path}, goto="vision_subgraph_node")
+        writer = get_stream_writer()
+        writer({"status": "routing to the vision model..."})
+        return Command(update={"messages": [SystemMessage(content="deconstructing this data...")], "file_path": result.file_path}, goto="vision_subgraph_node")
     if result.action == "None":
         # there is no separate subgraph for the generall model, the general model is the one that classifies the task here.
-        return Command(update={"messages": [SystemMessage(content="routing to the general model...")]}, goto="general_node")
+        writer = get_stream_writer()
+        writer({"status": "routing to the general model..."})
+        return Command(update={"messages": [SystemMessage(content="getting ready for your query..")]}, goto="general_node")
 
 def general_node(state: ParentState):
     """Node for general queries, that don't require a specialised coding or vision model"""
     # currently, this uses as the same model which is routing to coding or vision models.
     writer = get_stream_writer()
-    writer({"status": "crunching.."})
+    writer({"status": "getting ready..."})
     system = SystemMessage(content="You are Soma, a helpful AI assistant developed by team Malai Chaap. You will help the user with their general queries.")
     return {"messages": [MODEL.invoke(input=[system] + state["messages"])]}
 

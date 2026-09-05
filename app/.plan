@@ -56,3 +56,72 @@ I am done. It seems that the fault was in not adding a check on whether the cont
 2026-09-04
 I have now added a feature where where there's a general node too. One of the biggest limitations here is that I have not tested this setup with a history of messages. But anyways, I am probably going to commit that now.
 I also wrote a startup script to spin up cloudflared and start fastapi in development mode. It's pretty cool!
+
+2026-09-05
+Fuck. Phew. Fucking shit.
+Okay docling is a local model (or a suite of local models) that accepts any "vision" task, so routing to it was in fact the right decision all along. But still, there are at least three architectural problems I am tackling here:
+
+1. I am invoking docling on each CURL which makes it run an extraction pipeline. This includes OCR too. OCR requires deep learning and is CPU-heavy. I don't have a GPU on my system so it takes time. ENOUGH CRYING ABOUT YOUR SYSTEM! Yes, I can run it on my system but it takes 5 minutes. Sometimes it fucking leads to the kernel killing the process via OOM, but it still works.
+
+Man am I a shit engineer for not thikning through on this.
+
+2. the fucking tunnel - cloudflared closes the connection in exactly 100 seconds if there's no data from the backend. The problem? Because of my potato boy here, the workflow takes AT MINIMUM 300 seconds to run. This is TRIPLE of what cloudflare expects and it happily closes the connection - this is the reason that frontend guy's requests were failing. Okay, how did I verify this? I curl-ed it on localhost and it took like 6 fucking minutes, but it worked. cloudflared was the fucking problem.
+
+3. No dedicated vision model - I don't use moondream and shit. If I do use moondream I will have to a. rasterize each page of my PDF into a bitmap for an image b. feed that to moondream runnign via llama.cpp and c. pray to my 5300U that the almighty kernel doesn't kill that process.
+
+So at least two fixes need to be done RIGHT FUCKING NOW for this to be even considered a functional. At least the "coding model" works? Well I haven't verified that via cloudflared yet. Okay. So for the fixes:
+1. open your scratch.py. Use pymupdf to verify if the first 5 or so pages of a PDF are extractable. If they are, return a boolean True. If not, return a boolean False. Test this shit on at least 2 PDFs of different kinds. 
+2. Now that that's done, open your logic/graph.py. Run the shit by pymupdf first in vision pipeline. If it returns true, toggle OCR THE FUCK OFF before you feed it to docling. If not, don't toggle it off - just pray to almighty heavens that it doesn't take five more fucking minutes.
+3. If you have reached this step it means that your system is robust for 90% of cases when cloudflared is NOT running. But fuck cloudflare, those shits want me to send them a kiss every 100s. Ha, let me ask my agent to research into ngrok and if that supports this shit. If yes, I am switching providers asap. Because if I don't, I will have to send a ping every 40-50s to satisfy cloudflare's needs and that fucking sucks because it requires threads and that fucks with my monkey brain who doesn't know how fucking async works.
+
+Okay. Now I am ready to get started. The first step is to see if a PDF is extractable using pymupdf. I don't need to have a whole suite of tools for this - I know that there are too many variables here yet again like pptx, jpg and whatnot - but let's be honest - this is a fucking HACK. This is fucking retarded, and I am going all in on the retardation.
+
+Ha, I am back!
+Look at these scores:
+curl -X POST http://localhost:8000/api/message -H  -d  --no-buffer  0.01s user 0.00s system 0% cpu 44.376 total
+curl -X POST http://soma.ishu.foo/api/message -H  -d  --no-buffer  0.01s user 0.01s system 0% cpu 48.295 total
+All under a minute! That pymupdf thing really is working nicely!
+
+Also my agent told me that it's a skill issue and even docling's own documentation suggests that you should give a timeout when you're using OCR, because that shit takes a lot of time. Hmm, what do I want to do now? I don't get it. Might I want to write to the stream if the time is greater than 60s? And then keep doing that every minute so that cloudflare doesn't sleep? Let me try that with a pptx that guy uploaded.
+
+My plan is something like this - wrap my blocking function in asyncio to thread. Then every 60 seconds or so yield a ping to the frontend. This ping will not be a simple one, it would be a randomised selection of verbs found on LLM sites like claude.ai, like thinking churning etc. I will have to wrap this in an async Task it seems.
+blocking_coro = asyncio.to_thread(blocking)
+# execute the blocking function independently
+task = asyncio.create_task(blocking_coro)
+something like that.
+How will I measure time?
+Let me spin up another scratch.py.
+
+I did do something in scratch.py. That is interesting. I created a blocking function and a background function. The blocking function was allocated to a separate thread and the background function was running the entire time and was streaming updates to the user.
+
+Now listen to my plan - I will wrap the docling OCR step in an async def. I can add that to the background. But here's something better - if my start() function runs right now it's an async generator. I can simply write a timeout of max 15s and then return some gibberish to the client.
+Wait, no. The LLM told me that that's wrong. Yes, it's right - I tested the same thing in scratch.py and it wasn't working. So I do need to offload it to a separate thread. The plan changes then. I will make the OCR step an async function. I will modify my start step somehow - I will put an asyncio.run(main()) inside of it which also contains a background while True asyncio.timeout(10) loop which gives me chunks to work with while that blocking call runs.
+I don't know how to do this, but let me see what I can do. It's still a blackbox to me how I will manage to incorporate both asyncio.run and start function.
+
+Okay, so the plan is to create a producer and a consumer architecture. The producer runs an async worker task in the background and its whole job is to iterate through the graph.astream and push every chunk into an asyncio.Queue. Then we have the consumer, it's a while True loop that puts an async with asyncio.timeout(10) that pulls items fromm queue.get() and feeds it to the SSE generator. I.e., we yield here.
+
+Some pseudocode could be like this:
+async producer:
+	iterate through graph.astream and await queue.put(chunk)
+
+async consumer:
+	while true, queue.get(chunk) with timeout 10. If failure (TimeoutError) yield a ping
+	on success yield the actual chunk data logic or whatever.
+
+	
+create task for producer
+await consumer
+
+All of this will go inside my @app.post() function because this should run automatically when someone POSTs to the /api/message endpoint.
+
+Done! I am so fucking back. I discussed this with an LLM too because I had made three errors initially:
+1. I was not returning a StreamingResponse object, I was just returning an AsyncIterable, so fastapi was crashing.
+2. I was using a global queue - which meant that two users who hit the endpoint at different times will be connected to the same session.
+3. I was not adding a sentinel/final value to my loop when the astream from langgraph ended. This was a perfect use case for finally. Then the consumer just checks if this there and quits the while loop.
+
+Apart from that my event loop was fucking blocked again because of that OCR task which was taking 20+ seconds. The solution for that was just calling a stream writer before the heavy OCR job and assigning it its own separate thread so that I still receive status updates.
+
+As for cognitive losses, I knew no shit about async programming and did some things to get here. I feel like my brain is fried - I could've seen the global queue thing and how that would cause a problem. And the sentinel thing too. I am still not accustomed to async programming. I took an LLM's help here; 3/10.
+
+I need to write about async programming. It's fucking magic when it works.
+Anyways, let me commit this now. The pavlovian part of me wants to see that green square on the github stats page for today. Fuck that shit, that ain't based.

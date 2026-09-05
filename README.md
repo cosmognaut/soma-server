@@ -1,4 +1,4 @@
-<h1 align="center">soma v0.1</h1>
+<h1 align="center">soma v0.15</h1>
 <p align="center">An agentic workbench for keeping your sensitive data off the cloud, while still giving you access to the latest and greatest open source models</p>
 
 ## What this is

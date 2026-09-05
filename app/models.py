@@ -10,7 +10,7 @@ class MessageRequest(BaseModel):
     """A message request to the LLM"""
     input: Message
     history: list[Message]
-    file_id: Optional[str] = None
+    file_name: Optional[str] = None
 
 class StreamChunk(BaseModel):
     """A stream chunk to be sent to the user interface"""

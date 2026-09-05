@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "aiofiles>=25.1.0",
     "docker>=7.2.0",
     "docling>=2.125.0",
     "dotenv>=0.9.9",

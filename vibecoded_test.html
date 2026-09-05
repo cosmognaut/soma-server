@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soma Server - Upload Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; max-width: 600px; margin: 0 auto; }
+        .box { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        #log { white-space: pre-wrap; background: #111; color: #0f0; padding: 10px; border-radius: 5px; min-height: 100px; }
+        button { padding: 8px 15px; margin-top: 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h2>Test Multiple File Upload</h2>
+    
+    <div class="box">
+        <input type="file" id="fileInput" multiple>
+        <button id="uploadBtn">Upload Files</button>
+    </div>
+
+    <h3>Network Log</h3>
+    <div id="log">Waiting for action...</div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const log = document.getElementById('log');
+
+        function appendLog(message) {
+            log.textContent += `\n[${new Date().toLocaleTimeString()}] ${message}`;
+        }
+
+        uploadBtn.addEventListener('click', async () => {
+            const files = fileInput.files;
+            
+            if (files.length === 0) {
+                appendLog("Error: No files selected.");
+                return;
+            }
+
+            appendLog(`Starting upload of ${files.length} files...`);
+            
+            const formData = new FormData();
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                formData.append('files', file); // Matches the python `files: list[UploadFile]`
+                appendLog(`-> Queuing: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+            }
+
+            try {
+                const response = await fetch('http://localhost:8000/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const rawData = await response.text();
+                    appendLog(`<- Success (Raw Response): \n${rawData}`);
+                } else {
+                    const err = await response.text();
+                    appendLog(`<- Failed (Status: ${response.status}): \n${err}`);
+                }
+            } catch (error) {
+                appendLog(`<- Error uploading files: ${error.message}`);
+            }
+        });
+    </script>
+</body>
+</html>

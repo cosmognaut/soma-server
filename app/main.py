@@ -3,6 +3,7 @@ import json
 import time
 import random
 import asyncio
+import aiofiles
 from logic import graph
 from collections.abc import AsyncIterable
 from fastapi import FastAPI, File, UploadFile
@@ -25,66 +26,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-async def produce_chunks(history: list[AnyMessage], buffer: asyncio.Queue):
+async def stream_with_heartbeat(history: list[AnyMessage]):
     """
-    Move the chunks yielded from the graph into an async queue for consumption.
+    Stream currently ongoing events with heartbeat every ten seconds.
 
     Parameters:
-        history - a list of AnyMessage objects, containing the user message history
-        buffer - an asyncio.Queue containing chunks from the graph
-
+        history - a list of AnyMessage objects. This is the user conversation history.
     Returns:
         nothing
     """
-    try:
-        async for chunk in graph.start(history):
-            await buffer.put(chunk)
-            print(f"PUT CHUNK: {chunk}")
-            print(time.perf_counter())
-    except Exception as e:
-        print(f"Exception: {e}")
-    finally:
-        await buffer.put("END")
-
-async def consume_chunks(buffer: asyncio.Queue):
-    """
-    Consume the chunks currently in the async queue in the background.
-
-    Parameters:
-        buffer - an asyncio.Queue containing chunks from the graph
-
-    Returns:
-        nothing
-    """
-    # TODO: add error streaming later.
+    iterator = graph.start(history)
     verbs = ["crunching...", "distilling...", "working hard on it...", "connecting the dots...", "spinning up..."]
     while True:
         try:
             async with asyncio.timeout(10):
-                chunk = await buffer.get()
-                print(f"GET CHUNK: {chunk}")
-                print(time.perf_counter())
-                if chunk == "END":
-                    break
-        except asyncio.TimeoutError:
-            print("The current chunk took more than 10 seconds to be received")
-            chunk = {'type': "custom", 'data': {'status': f"{random.choice(verbs)}"}}
-        try:
-            if chunk['type'] == "updates" and isinstance(list(chunk['data'].values())[0]['messages'][0], AIMessage) and list(chunk['data'].values())[0]['messages'][0].content != '':
-                response: AIMessage = list(chunk['data'].values())[0]['messages'][0]
-                data = json.dumps(StreamChunk(type="answer", payload=str(response.content)).model_dump())
-                print(data)
-                yield f"data: {data}\n\n"
-            elif chunk['type'] == "custom":
-                data = json.dumps(StreamChunk(type="status", payload=str(chunk['data']['status'])).model_dump())
-                print(data)
-                yield f"data: {data}\n\n"
+                chunk = await anext(iterator)
+            # if we are here, we have a chunk
+            try:
+                if chunk['type'] == "updates" and isinstance(list(chunk['data'].values())[0]['messages'][0], AIMessage) and list(chunk['data'].values())[0]['messages'][0].content != '':
+                    response: AIMessage = list(chunk['data'].values())[0]['messages'][0]
+                    data = StreamChunk(type="answer", payload=str(response.content)).model_dump_json()
+                    print(data)
+                    yield f"data: {data}\n\n"
+                elif chunk['type'] == "custom":
+                    data = json.dumps(StreamChunk(type="status", payload=str(chunk['data']['status'])).model_dump())
+                    print(data)
+                    yield f"data: {data}\n\n"
+            except Exception as e:
+                print(f"Exception: {e}")
+                print(chunk)
+        except TimeoutError:
+            # 10 seconds have passed but the generator is still running
+            status_message = random.choice(verbs)
+            data = StreamChunk(type="status", payload=status_message).model_dump_json()
+            yield f"data: {data}\n\n"
+
+        except StopAsyncIteration:
+            # generator has naturally finished executing. End the loop.
+            break
         except Exception as e:
-            print(f"Exception: {e}")
-            print(chunk)
+            # a real error has ocurred somewhere.
+            yield f'data: {"error": "{str(e)}"}\n\n'
+            break
+
 
 @app.post("/api/message", response_class=StreamingResponse)
 async def stream_message(message_request: MessageRequest) -> StreamingResponse:
+    """
+    Stream the graph's current status asynchronously.
+    """
     # message_dict = message_request.model_dump()
     history: list[AnyMessage] = []
     user_message: Message = message_request.input
@@ -95,17 +85,23 @@ async def stream_message(message_request: MessageRequest) -> StreamingResponse:
             history.append(HumanMessage(message.content))
         elif message.role == "assistant":
             history.append(AIMessage(message.content))
-    buffer = asyncio.Queue()
-    task = asyncio.create_task(produce_chunks(history, buffer))
-    return StreamingResponse(consume_chunks(buffer))
+    return StreamingResponse(stream_with_heartbeat(history), media_type="text/event-stream")
 
 
-# TODO: revamp to allow multiple uploads later
 @app.post("/api/upload")
-async def create_upload_file(file: UploadFile):
-    identifier: str = f"{uuid.uuid1()}"
-    extension: str = str(file.filename).split(".")[1]
-    with open(f"./app/uploads/{identifier}.{extension}", "wb") as my_file:
-        content = await file.read()
-        my_file.write(content)
-    return UploadResponse(file_id=identifier, file_name=f"{identifier}.{extension}").model_dump()
+async def create_upload_file(files: list[UploadFile]) -> list[UploadResponse]:
+    """
+    Upload multiple files to the server in chunks of 64KB, asynchronously.
+    """
+    responses = []
+    for file in files:
+        SIXTY_FOUR_KB = 65536
+        identifier: str = f"{uuid.uuid4()}"
+        extension: str = str(file.filename).split(".")[1]
+        async with aiofiles.open(f"./app/uploads/{identifier}.{extension}", "wb") as my_file:
+            content = await file.read(SIXTY_FOUR_KB)
+            while content:
+                await my_file.write(content)
+                content = await file.read(SIXTY_FOUR_KB)
+        responses.append(UploadResponse(file_id=identifier, file_name=f"{identifier}.{extension}"))
+    return [response.model_dump() for response in responses]

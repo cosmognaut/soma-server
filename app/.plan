@@ -125,3 +125,55 @@ As for cognitive losses, I knew no shit about async programming and did some thi
 
 I need to write about async programming. It's fucking magic when it works.
 Anyways, let me commit this now. The pavlovian part of me wants to see that green square on the github stats page for today. Fuck that shit, that ain't based.
+
+2026-09-06
+Wow. I can never trust these LLMs can I. I thought pi was better. I installed it and tried to ask it to simplify my code and give me suggestions. But no! It's still trash. And I did think through the code but now I have a big fucking bug somewhere, and I bet it's in the async thing - because the loop literally doesn't function properly. Well I can't blame it - I am the real fool here but anyways. Yeah it's got a bug somewhere in the loop.
+The problem is that the loop always quits after giving a heartbeat status update. This ONLY happens when there's a >=10s delay between two chunks being processed in the async event loop.
+Something is wrong but I am too tired. Bye.
+Yes it is the fucking loop btw. Correlation doesn't imply causation but whenever I see that 10s have passed the loop quits.
+
+I am back. So I was right afterall! StopAsyncIteration step is being reached before the loop continues! 
+let me try adding a default value in anext.
+
+Okay, let me try to explain what's going on. The code looks like this:
+    while True:
+        try:
+            async with asyncio.timeout(10):
+                chunk = await anext(iterator)
+                print(f"Current chunk is {chunk}")
+            # if we are here, we have a chunk
+			# do shit, yield the message
+
+        except asyncio.TimeoutError:
+            # 10 seconds have passed but the generator is still running
+			# yield some ping
+
+        except StopAsyncIteration:
+            # generator has naturally finished executing. End the loop.
+            break
+        except Exception as e:
+            # a real error has ocurred somewhere.
+			# yield the error
+            break
+The timer fires on the event loop as soon as we hit asyncio.timeout(10). When 10 seconds expire without a chunk arriving, the event loop executes that scheduled timer callback. It cancels the current task and fires a CancelledError.
+Because the task was suspended inside the anext(iterator), the CancelledError gets thrown directly down into the execution frame of the iterator. When it's thrown into the generator, its state transitions to GEN_CLOSED. asyncio.timeout converts the exception when the CancelledError continues bubbling all the way up to anext().It supresses it and instead raises TimeoutError. My code catches this and yields some message like "crunching" or whatever.
+Then the loop moves on to the next iteration - but the generator is already closed! So StopAsyncIteration is raised and my loop dies.
+There are two ways to solve this:
+1. the producer consumer architecture I had deployed earlier
+2. using asyncio.wait that does not cancel the current task.
+I hypothesise that the former is superior as with that the chunk generator is not suspended on each yield until the consumer runs. The chunk generator cannot do background work for the next chunk while the consumer runs. This is solvable by using an asyncio.Queue. The producer just puts to the queue, and the consumer just gets from the queue.
+
+Okay I have changed the code and have just copied myself from earlier.
+Okay I don't know what create_task is doing so I asked pi.
+The event loop is like a single perrson working on a desk with a todo list (deque)and a phone (epoll on linux). There is only ONE THREAD in python and one execution task.
+an asyncio.Task is a heap-allocated (RAM?) python object that wraps a generator frame. That frame contains the local variables of the coroutine and an instruction pointer (f_lasti) marking the bytecode offset where it was paused.
+Recall that a coro is just a C struct or something that can resume its execution later because it remember the exact moment it was paused.
+when you call create_task(coro), python instantiates an asyncio.Task object, and it pushes a callback (task._step) to the event loop's internal queue of runnable items. It immediately returns the Task object to your line of code.
+
+The event loop calls epoll_wait() on Linux to see if any network sockets or timers have data or expired deadlines. It takes a task off its ready queue then to pop the next runnable task. It then calls coroutine.send(None) so that the CPU starts executing the instructions inside the coro. The coro runs until it reaches an await - recall that the job of await is to just yield control lback to the event loop. It's like an IOU. But yeah, so it reaches an await on an unfinished I/O operation and that await suspends the frame and yields control back. The loop then moves to the next task in queue.
+
+Okay from StackOverflow:
+- create task just submits the coro to run "in the background", i.e. concurrently with the current task and all other tasks, switching between await points. It returns an awaitable handle called a "task" which you can also use to cancel the execution of teh coro.
+
+I think that's a useful abstraction right now, but I've got to read that realpython article soon enough.
+Anyways, let me commit this.

@@ -26,48 +26,71 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-async def stream_with_heartbeat(history: list[AnyMessage]):
+async def produce_chunks(history: list[AnyMessage], buffer: asyncio.Queue):
     """
-    Stream currently ongoing events with heartbeat every ten seconds.
+    Move the chunks yielded from the graph into the async queue for consumption. Put a sentinel value "END" in the bfufer when the graph has been fully iterated over.
 
     Parameters:
-        history - a list of AnyMessage objects. This is the user conversation history.
+        history - a list of AnyMessage objects, containing the user message history
+        buffer - an asyncio.Queue containing chunks received from the graph
+
+    Yields:
+        nothing
+
     Returns:
         nothing
     """
-    iterator = graph.start(history)
+    try:
+        async for chunk in graph.start(history):
+            await buffer.put(chunk)
+            print(f"PUT CHUNK: {chunk}")
+            print(time.perf_counter())
+    except Exception as e:
+        print(f"Exception: {e}")
+    finally:
+        await buffer.put("END")
+
+
+async def consume_chunks(buffer: asyncio.Queue):
+    """
+    Consume the chunks currently in the async queue in the background.
+
+    Parameters:
+        buffer - an asyncio.Queue containing chunks from the graph
+
+    Yields:
+        status updates for the client in form of SSEs
+
+    Returns:
+        nothing
+    """
     verbs = ["crunching...", "distilling...", "working hard on it...", "connecting the dots...", "spinning up..."]
     while True:
         try:
             async with asyncio.timeout(10):
-                chunk = await anext(iterator)
-            # if we are here, we have a chunk
-            try:
-                if chunk['type'] == "updates" and isinstance(list(chunk['data'].values())[0]['messages'][0], AIMessage) and list(chunk['data'].values())[0]['messages'][0].content != '':
-                    response: AIMessage = list(chunk['data'].values())[0]['messages'][0]
-                    data = StreamChunk(type="answer", payload=str(response.content)).model_dump_json()
-                    print(data)
-                    yield f"data: {data}\n\n"
-                elif chunk['type'] == "custom":
-                    data = json.dumps(StreamChunk(type="status", payload=str(chunk['data']['status'])).model_dump())
-                    print(data)
-                    yield f"data: {data}\n\n"
-            except Exception as e:
-                print(f"Exception: {e}")
-                print(chunk)
-        except TimeoutError:
-            # 10 seconds have passed but the generator is still running
-            status_message = random.choice(verbs)
-            data = StreamChunk(type="status", payload=status_message).model_dump_json()
-            yield f"data: {data}\n\n"
+                chunk = await buffer.get()
+                print(f"GET CHUNK: {chunk}")
+                print(time.perf_counter())
+                if chunk == "END": # sentinel value
+                    break
+        except asyncio.TimeoutError:
+            print("The current chunk took more than 10 seconds to be received.")
+            chunk = {"type": "custom", "data": {"status": f"{random.choice(verbs)}"}} 
+        # if we're here we either have a real chunk or a >=10s heartbeat chunk
 
-        except StopAsyncIteration:
-            # generator has naturally finished executing. End the loop.
-            break
+        try:
+            if chunk['type'] == "updates" and isinstance(list(chunk['data'].values())[0]['messages'][0], AIMessage) and list(chunk['data'].values())[0]['messages'][0].content != '':
+                response: AIMessage = list(chunk['data'].values())[0]['messages'][0]
+                data = StreamChunk(type="answer", payload=str(response.content)).model_dump_json()
+                print(data)
+                yield f"data: {data}\n\n"
+            elif chunk['type'] == "custom":
+                data = StreamChunk(type="status", payload=str(chunk['data']['status'])).model_dump_json()
+                print(data)
+                yield f"data: {data}\n\n"
         except Exception as e:
-            # a real error has ocurred somewhere.
-            yield f'data: {"error": "{str(e)}"}\n\n'
-            break
+            print(f"Exception: {e}")
+            print(chunk)
 
 
 @app.post("/api/message", response_class=StreamingResponse)
@@ -85,7 +108,9 @@ async def stream_message(message_request: MessageRequest) -> StreamingResponse:
             history.append(HumanMessage(message.content))
         elif message.role == "assistant":
             history.append(AIMessage(message.content))
-    return StreamingResponse(stream_with_heartbeat(history), media_type="text/event-stream")
+    buffer = asyncio.Queue()
+    task = asyncio.create_task(produce_chunks(history, buffer))
+    return StreamingResponse(consume_chunks(buffer), media_type="text/event-stream")
 
 
 @app.post("/api/upload")

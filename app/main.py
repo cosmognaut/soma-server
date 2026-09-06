@@ -101,7 +101,7 @@ async def stream_message(message_request: MessageRequest) -> StreamingResponse:
     # message_dict = message_request.model_dump()
     history: list[AnyMessage] = []
     user_message: Message = message_request.input
-    user_message.content += f"{message_request.file_name}"
+    user_message.content += f"\n File: {message_request.file_name}"
     message_request.history.append(user_message)
     for message in message_request.history:
         if message.role == "user":

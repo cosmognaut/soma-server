@@ -7,10 +7,11 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from .hack import ocr_required
 from langchain.tools import tool
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from langgraph.types import Command
 from langgraph.config import get_stream_writer
 from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langchain.chat_models import init_chat_model
 from typing_extensions import TypedDict, Annotated
 from langgraph.graph import StateGraph, START, END
@@ -27,11 +28,18 @@ ENDPOINT_KEY = os.getenv("API_KEY")
 
 torch.set_num_threads(2)
 
-MODEL = ChatOpenAI(
-    model="gemini-3.8-flash-high",
-    base_url=MY_ENDPOINT,
-    api_key=ENDPOINT_KEY,
-    temperature=0
+# MODEL = ChatOpenAI(
+#     model="gemini-3.8-flash-high",
+#     base_url=MY_ENDPOINT,
+#     api_key=ENDPOINT_KEY,
+#     temperature=0
+# )
+
+
+MODEL = ChatOllama(
+    model="qwen2.5:7b",
+    base_url="https://eternal-purchasing-opposition-athletes.trycloudflare.com/",
+    temperature=0,
 )
 
 ## Coding Subgraph
@@ -181,8 +189,8 @@ class ParentState(TypedDict):
 # model for the output for this model
 class SupervisorModel(BaseModel):
     """Model for the supervisor_node"""
-    action: str
-    file_path: str
+    action: Literal["Coding", "Vision", "None"]
+    file_path: Optional[str] = None
 
 def supervisor_node(state: ParentState):
     """Supervisor node which decides whether to route to coding subgraph or the vision subgraph based on the user's prompt"""
@@ -200,13 +208,13 @@ def supervisor_node(state: ParentState):
         writer = get_stream_writer()
         writer({"status": "routing to the coding model..."})
         return Command(update={"messages": [SystemMessage(content="making sure I don't sudo rm -rf / this server...")]}, goto="coding_subgraph_node")
-    if result.action == "Vision":
+    elif result.action == "Vision":
         # I am using a shared state key to share state between ParentState and VisionState
         # an alternative would be to call the subgraph right here, right now.
         writer = get_stream_writer()
         writer({"status": "routing to the vision model..."})
         return Command(update={"messages": [SystemMessage(content="deconstructing this data...")], "file_path": result.file_path}, goto="vision_subgraph_node")
-    if result.action == "None":
+    else:
         # there is no separate subgraph for the generall model, the general model is the one that classifies the task here.
         writer = get_stream_writer()
         writer({"status": "routing to the general model..."})

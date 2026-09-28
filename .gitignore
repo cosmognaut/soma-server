@@ -15,3 +15,6 @@ wheels/
 # uploads for testing
 uploads/*
 !uploads/.gitkeep
+app/uploads/*
+# log files
+*.log

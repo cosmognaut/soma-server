@@ -1,3 +1,4 @@
+<video src="https://github.com/user-attachments/assets/a9c5f270-9870-4d6b-a4b7-1f0c40621759">
 <h1 align="center">soma v0.15</h1>
 <p align="center">An agentic workbench for keeping your sensitive data off the cloud, while still giving you access to the latest and greatest open source models</p>
 
@@ -8,7 +9,6 @@ This is the backend server and logic for **soma** - an agentic workbench, specif
 The core workflow (inside `logic/`) was built using LangGraph, with OCR support from docling. We use `qwen-2.5:7b` for both coding related tasks and general queries. For testing purposes we sometimes also resort to `gemini-3.8-flash-high` served via Google's endpoint. Most interestingly, we use a **decision model** named [laya](https://huggingface.co/convaiinnovations/laya) to categorise the incoming user prompt to detect whether it's a coding task or not. More info in [Architecture](#architecture).
 
 The server itself uses FastAPI to expose the workflow.
-
 
 ## Architecture
 ```mermaid
@@ -80,9 +80,9 @@ The supervisor routing layer requires [Ollaya](https://ollaya.dev) running local
    ```bash
    ollaya pull laya:en
    ```
-3. Build the `soma-router` model artifact using the repository's `Modellile`
+3. Build the `soma-router` model artifact using the repository's `Modelfile`
    ```bash
-   ollaya create soma-router -f Modellile
+   ollaya create soma-router -f Modelfile
    ```
 4. Now run the ollaya server in the background:
    ```bash

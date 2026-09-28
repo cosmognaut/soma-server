@@ -1,8 +1,10 @@
-<video src="https://github.com/user-attachments/assets/a9c5f270-9870-4d6b-a4b7-1f0c40621759" controls="controls" width="100%"></video>
 <h1 align="center">soma v0.15</h1>
 <p align="center">An agentic workbench for keeping your sensitive data off the cloud, while still giving you access to the latest and greatest open source models</p>
 
-The video was recorded during the initial prototype phase for this project, showcasing the end-to-end agent workflow, Docling OCR integration, and containerized Docker execution sandbox before the supervisor latency refactor.
+<video src="https://github.com/user-attachments/assets/a9c5f270-9870-4d6b-a4b7-1f0c40621759" controls="controls" width="100%"></video>
+
+> **Note**: Recorded during the initial prototype phase for this project, showcasing the end-to-end agent workflow, Docling OCR integration, and containerized Docker sandbox before the supervisor latency refactor.
+
 ## What this is
 This is the backend server and logic for **soma** - an agentic workbench, specifically suited for industry workers that lets you access open source models with multimodal routing, capable of maintaining zero outbound connections and zero API costs, all run in air-gapped, local hardware.
 

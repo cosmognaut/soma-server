@@ -8,8 +8,33 @@ This is the backend server and logic for SIH26117, a project me and my team have
 The core workflow (inside `logic/`) was built using LangGraph, with OCR support from docling. We use `qwen-2.5:7b` for both coding related tasks and general queries.
 The server itself uses FastAPI to expose the workflow.
 
+
+## Architecture
+```mermaid
+   flowchart TD
+       User([Inbound User Query]) --> RouterNode[Supervisor Node]
+
+       subgraph "Tiered Routing Layer"
+           RouterNode --> HasFile{file_path in state?}
+           HasFile -- "Yes (Deterministic / 0ms)" --> VisionNode[Vision Subgraph]
+           HasFile -- "No (Fuzzy Intent)" --> OllayaDecision["soma-router (Ollaya /
+ Laya:en 421M)<br/>Single Forward Pass (~300ms)"]
+
+           OllayaDecision --> IntentCheck{Decision Output}
+           IntentCheck -- "coding" --> CodingNode[Coding Subgraph]
+           IntentCheck -- "general" --> GeneralNode[General Node]
+       end
+
+       subgraph "Execution / Actuation Engines"
+           VisionNode --> Docling[Docling PDF Parser / OCR Engine]
+           CodingNode --> LLMCoding[Coding LLM]
+           LLMCoding --> DockerSandbox[Docker Container: python:3.12-slim]
+           GeneralNode --> LLMGeneral[Conversational LLM]
+       end
+```
+
 ## Test it locally
-This is still **very** early in development, so you may notice some things breaking. But still, for development, follow the below steps:
+To test the server locally:
 1. Clone the repository:
    ```bash
    git clone https://github.com/cosmognaut/soma-server.git
@@ -43,6 +68,3 @@ This is still **very** early in development, so you may notice some things break
 2. If the user uploads a big file now (> maybe 50 pages?) my server crashes even with `Semaphore(1)` because of the kernel triggering OOM. This is easily fixable if I move this server to a better PC with an actual GPU, but it seems that I can't do that right now.
 3. No server persistence. We are not using RAG for now, so persistence via Qdrant or something else doesn't make sense. The client captures the entire conversation history in their requests, so we're not even using LangGraph's checkpointers for saving memory.
 4. This is a minor one but is still worth mentioning - we don't stream any errors to the client right now.
-
-## Architecture
-Still kind of undecided upon.

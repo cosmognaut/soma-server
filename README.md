@@ -2,7 +2,7 @@
 <p align="center">An agentic workbench for keeping your sensitive data off the cloud, while still giving you access to the latest and greatest open source models</p>
 
 ## What this is
-This is the backend server and logic **soma** - it's an agentic workbench, specifically suited for industry workers that lets you access open source models with multimodal routing, capable of maintaining zero outbound connections and zero API costs, all run in air-gapped, local hardware.
+This is the backend server and logic for **soma** - an agentic workbench, specifically suited for industry workers that lets you access open source models with multimodal routing, capable of maintaining zero outbound connections and zero API costs, all run in air-gapped, local hardware.
 
 ## Built with
 The core workflow (inside `logic/`) was built using LangGraph, with OCR support from docling. We use `qwen-2.5:7b` for both coding related tasks and general queries. For testing purposes we sometimes also resort to `gemini-3.8-flash-high` served via Google's endpoint. Most interestingly, we use a **decision model** named [laya](https://huggingface.co/convaiinnovations/laya) to categorise the incoming user prompt to detect whether it's a coding task or not. More info in [Architecture](#architecture).
@@ -17,10 +17,8 @@ The server itself uses FastAPI to expose the workflow.
 
        subgraph "Tiered Routing Layer"
            RouterNode --> HasFile{file_path in state?}
-           HasFile -- "Yes (Deterministic / 0ms)" --> VisionNode[Vision Subgraph]
-           HasFile -- "No (Fuzzy Intent)" --> OllayaDecision["soma-router (Ollaya /
- Laya:en 421M)<br/>Single Forward Pass (~300ms)"]
-
+           HasFile -- "Yes (deterministic / 0ms)" --> VisionNode[Vision Subgraph]
+           HasFile -- "No (fuzzy intent)" --> OllayaDecision["soma-router (Ollaya / Laya:en 421M)<br/>Single Forward Pass (~200ms)"]
            OllayaDecision --> IntentCheck{Decision Output}
            IntentCheck -- "coding" --> CodingNode[Coding Subgraph]
            IntentCheck -- "general" --> GeneralNode[General Node]
@@ -36,10 +34,20 @@ The server itself uses FastAPI to expose the workflow.
 - At first we were using naive prompt routing, spinning up a 7b param autoregressive generative model (either qwen or gemini), wait 2-3+ seconds for sequential token generation and memory-bandwidth bound KV cache loads and force it to produce JSON using LangGraph's `with_structured_output`.
 - This was replaced using a much faster approach:
   - A single CPU instruction routes document at 0ms cost (`state.get('file_path')`).
-  - Ambiguous text queries hit `soma-router` which is a 421M param `laya:en` model running locally via `ollaya` on CPU using ONNX. The transformer evaluates classification heads in a **single forward pass** (tested at ~300ms on a 4-core Ryzen CPU) emitting strictly typed decisions (`coding` vs `general`) with zero generative overhead.
-  - The model footprint is 854MB of RAM for `soma-router` (configured laya) compared to ~4.5GB to 14GB for an autoregressive LLM.
+  - Ambiguous text queries hit `soma-router` which is a 421M param `laya:en` model running locally via `ollaya` on CPU using ONNX. The transformer evaluates classification heads in a **single forward pass** (see benchmark below) emitting strictly typed decisions (`coding` vs `general`) with zero generative overhead.
+  - The model footprint is 854MB of RAM for `soma-router` (configured laya) compared to ~4GB for a basic autoregressive LLM that I was using before (`qwen2.5:3b`).
+ 
+### Benchmark: supervisor routing latency and footprint
+Benchmarked on an AMD Ryzen 3 5300U (4C/8T, CPU-only execution) across 50 iterations with 3 warmup runs discarded (`tests/router_benchmark.py`):
+| Metric / Dimension | Naive Generative Router (`qwen2.5:3b`) | Decision Router (`soma-router` / `laya:en`) | Delta |
+| :--- | :--- | :--- | :--- |
+| **Execution Model** | Autoregressive Token-by-Token Decoding | Non-Autoregressive Single Forward Pass | Zero KV-cache overhead |
+| **p50 latency (median)** | `1,380.5 ms` | `221.7 ms` | **6.2x faster** (-84% latency) |
+| **p90 latency** | `1,398.4 ms` | `259.9 ms` | **5.4x faster** |
+| **p99 latency (tail)** | `1,411.1 ms` | `272.8 ms` | **5.2x faster** (tight 51ms jitter) |
+| **Memory footprint (RAM)** | ~2.5 – 4.0 GB | `854 MB` | ~75% memory reduction |
 
- What I learned was that decision models are much better than LLMs at a certain kind of task - when you need probabilistic inference for some if/else question. This can reduce API costs as well as inference latency, and is also less time consuming than training one's own classifier.
+ What I learned was that decision models are much better than LLMs at a certain kind of task - when you need probabilistic inference on low latency for some if/else question. This can reduce API costs as well as inference latency, and is also less time consuming than training one's own classifier. Using generative LLMs for this use case might be an anti-pattern in the future.
 
 ## Test it locally
 To test the server locally:

@@ -1,11 +1,12 @@
 import os
+import httpx
 import torch
 import docker
 import asyncio
 import operator
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from .hack import ocr_required
+from logic.hack import ocr_required
 from langchain.tools import tool
 from typing import Any, Optional, Literal
 from langgraph.types import Command
@@ -25,22 +26,35 @@ load_dotenv()
 # GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") - not used right now
 MY_ENDPOINT = os.getenv("MY_ENDPOINT")
 ENDPOINT_KEY = os.getenv("API_KEY")
+OLLAMA_URL = os.getenv("OLLAMA_URL")
 
 torch.set_num_threads(2)
 
-# MODEL = ChatOpenAI(
-#     model="gemini-3.8-flash-high",
-#     base_url=MY_ENDPOINT,
-#     api_key=ENDPOINT_KEY,
-#     temperature=0
-# )
-
-
-MODEL = ChatOllama(
-    model="qwen2.5:7b",
-    base_url="https://eternal-purchasing-opposition-athletes.trycloudflare.com/",
-    temperature=0,
+MODEL = ChatOpenAI(
+    model="gemini-3.8-flash-high",
+    base_url=MY_ENDPOINT,
+    api_key=ENDPOINT_KEY,
+    temperature=0
 )
+
+OLLAYA_URL = "http://127.0.0.1:11435/api/decide"
+
+# MODEL = ChatOllama(
+#     model="qwen2.5:7b",
+#     base_url=OLLAMA_URL,
+#     temperature=0,
+# )
+def ollaya_router(query: str):
+    """Routes a query through Ollaya's laya decision model; this one is a custom version of it (soma-router) created via a ModelFile using ollaya create"""
+    response = httpx.post(
+        OLLAYA_URL,
+        json={
+            "model": "soma-router", # custom distilled model
+            "state": query
+        }
+    )
+    decision = response.json()['answers']['answer']['choice']
+    return decision
 
 ## Coding Subgraph
 # Define tools
@@ -198,23 +212,23 @@ def supervisor_node(state: ParentState):
     writer({"status": "thinking..."})
     # print(f"[{supervisor_node.__name__}]")
     latest_message = state["messages"][-1]
-    model = MODEL.with_structured_output(SupervisorModel)
-    result = model.invoke(input=f"Based on this message: {latest_message} just reply using one word for action and another for the file path, if present - either Coding or Vision based on whether the task is related to coding or vision operations. If it's related to neither, just put None in action. If it's a task related to documents (i.e. vision), make sure that the file_path has the correct file path. Because this is running on a server, make sure that filepaths are formatted well, for example if the user gives abc.pdf you must write /app/uploads/abc.pdf for file path. Example of coding tasks: anything where code has to be written. Example of vision tasks: document parsing, ex. extracting entitites from a document, document path, etc.")
     # final_output = result.content[0]['text'] # Coding, Image or None
     # print(f"[{supervisor_node.__name__}]: {result}")
     # return a command object that routes to either the coding subgraph or the image subgraph
-    print(f"Result is {result}")
-    if result.action == "Coding":
-        writer = get_stream_writer()
-        writer({"status": "routing to the coding model..."})
-        return Command(update={"messages": [SystemMessage(content="making sure I don't sudo rm -rf / this server...")]}, goto="coding_subgraph_node")
-    elif result.action == "Vision":
+    if state.get('file_path'):
+        # if file path is present, immediately route to a vision model
         # I am using a shared state key to share state between ParentState and VisionState
         # an alternative would be to call the subgraph right here, right now.
         writer = get_stream_writer()
         writer({"status": "routing to the vision model..."})
         return Command(update={"messages": [SystemMessage(content="deconstructing this data...")], "file_path": result.file_path}, goto="vision_subgraph_node")
-    else:
+    result = ollaya_router(latest_message.content)
+    print(f"Result is {result}")
+    if result == "coding":
+        writer = get_stream_writer()
+        writer({"status": "routing to the coding model..."})
+        return Command(update={"messages": [SystemMessage(content="making sure I don't sudo rm -rf / this server...")]}, goto="coding_subgraph_node")
+    elif result == "general":
         # there is no separate subgraph for the generall model, the general model is the one that classifies the task here.
         writer = get_stream_writer()
         writer({"status": "routing to the general model..."})

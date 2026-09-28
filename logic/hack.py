@@ -13,7 +13,7 @@ def ocr_required(pdf_path: str) -> bool:
     """
     doc = pymupdf.open(pdf_path)
     texts = []
-    for page in doc[5:]:
+    for page in doc[:3]:
         texts.append(page.get_text())
     # for debugging
     print(f"PyMuPDF returned {texts}")

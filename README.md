@@ -37,7 +37,7 @@ The server itself uses FastAPI to expose the workflow.
 - This was replaced using a much faster approach:
   - A single CPU instruction routes document at 0ms cost (`state.get('file_path')`).
   - Ambiguous text queries hit `soma-router` which is a 421M param `laya:en` model running locally via `ollaya` on CPU using ONNX. The transformer evaluates classification heads in a **single forward pass** (tested at ~300ms on a 4-core Ryzen CPU) emitting strictly typed decisions (`coding` vs `general`) with zero generative overhead.
-  - The model footprint is 854MB of RAM for `soma-router` (configured laya) compared to much, much more for an autoregressive LLM.
+  - The model footprint is 854MB of RAM for `soma-router` (configured laya) compared to ~4.5GB to 14GB for an autoregressive LLM.
 
  What I learned was that decision models are much better than LLMs at a certain kind of task - when you need probabilistic inference for some if/else question. This can reduce API costs as well as inference latency, and is also less time consuming than training one's own classifier.
 

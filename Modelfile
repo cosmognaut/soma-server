@@ -1,0 +1,16 @@
+FROM laya:en
+
+QUESTIONS """
+{
+"answer": {
+	"type": "choice",
+	"instructions": "What is the primary action requested by the user?",
+	"criteria": {
+ 		"coding": "writing, editing, or debugging programming source code and terminal commands",
+ 		"general": "general conversation, greetings, Q&A, or casual inquiries"
+	}
+	}
+}
+"""
+PARAMETER precision fp32
+DESCRIPTION soma router 

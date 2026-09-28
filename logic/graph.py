@@ -200,11 +200,6 @@ class ParentState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
     file_path: Optional[str]
 
-# model for the output for this model
-class SupervisorModel(BaseModel):
-    """Model for the supervisor_node"""
-    action: Literal["Coding", "Vision", "None"]
-    file_path: Optional[str] = None
 
 def supervisor_node(state: ParentState):
     """Supervisor node which decides whether to route to coding subgraph or the vision subgraph based on the user's prompt"""
@@ -221,7 +216,7 @@ def supervisor_node(state: ParentState):
         # an alternative would be to call the subgraph right here, right now.
         writer = get_stream_writer()
         writer({"status": "routing to the vision model..."})
-        return Command(update={"messages": [SystemMessage(content="deconstructing this data...")], "file_path": result.file_path}, goto="vision_subgraph_node")
+        return Command(update={"messages": [SystemMessage(content="deconstructing this data...")], "file_path": state.get('file_path')}, goto="vision_subgraph_node")
     result = ollaya_router(latest_message.content)
     print(f"Result is {result}")
     if result == "coding":

@@ -5,7 +5,7 @@
 This is the backend server and logic **soma** - it's an agentic workbench, specifically suited for industry workers that lets you access open source models with multimodal routing, capable of maintaining zero outbound connections and zero API costs, all run in air-gapped, local hardware.
 
 ## Built with
-The core workflow (inside `logic/`) was built using LangGraph, with OCR support from docling. We use `qwen-2.5:7b` for both coding related tasks and general queries. For testing purposes we sometimes also resort to `gemini-3.8-flash-high` served via Google's endpoint. Most interestingly, we use a **decision model** named [laya](https://huggingface.co/convaiinnovations/laya) to categorise the incoming user prompt to detect whether it's a coding task or not. More info in [Architecture](##Architecture).
+The core workflow (inside `logic/`) was built using LangGraph, with OCR support from docling. We use `qwen-2.5:7b` for both coding related tasks and general queries. For testing purposes we sometimes also resort to `gemini-3.8-flash-high` served via Google's endpoint. Most interestingly, we use a **decision model** named [laya](https://huggingface.co/convaiinnovations/laya) to categorise the incoming user prompt to detect whether it's a coding task or not. More info in [Architecture](#architecture).
 
 The server itself uses FastAPI to expose the workflow.
 
@@ -35,8 +35,8 @@ The server itself uses FastAPI to expose the workflow.
 ```
 - At first we were using naive prompt routing, spinning up a 7b param autoregressive generative model (either qwen or gemini), wait 2-3+ seconds for sequential token generation and memory-bandwidth bound KV cache loads and force it to produce JSON using LangGraph's `with_structured_output`.
 - This was replaced using a much faster approach:
-  - A singe CPU instruction routes document at 0ms cost (`state.get('file_path')`).
-  - Ambiguous text queries hit `soma-router` which is a 421M param `laya:en` model running locally via `ollaya` on CPU using ONMX. The transformer evaluates classification heads in a **single forward pass** (tested at ~300ms on a 4-core Ryzen CPU) emitting strictly typed decisions (`coding` vs `general`) with zero generative overhead.
+  - A single CPU instruction routes document at 0ms cost (`state.get('file_path')`).
+  - Ambiguous text queries hit `soma-router` which is a 421M param `laya:en` model running locally via `ollaya` on CPU using ONNX. The transformer evaluates classification heads in a **single forward pass** (tested at ~300ms on a 4-core Ryzen CPU) emitting strictly typed decisions (`coding` vs `general`) with zero generative overhead.
   - The model footprint is 854MB of RAM for `soma-router` (configured laya) compared to much, much more for an autoregressive LLM.
 
  What I learned was that decision models are much better than LLMs at a certain kind of task - when you need probabilistic inference for some if/else question. This can reduce API costs as well as inference latency, and is also less time consuming than training one's own classifier.
@@ -72,9 +72,9 @@ The supervisor routing layer requires [Ollaya](https://ollaya.dev) running local
    ```bash
    ollaya pull laya:en
    ```
-3. Build the `soma-router` model artifact using the repository's `ModelFile`
+3. Build the `soma-router` model artifact using the repository's `Modellile`
    ```bash
-   ollaya create soma-router -f ModelFile
+   ollaya create soma-router -f Modellile
    ```
 4. Now run the ollaya server in the background:
    ```bash
